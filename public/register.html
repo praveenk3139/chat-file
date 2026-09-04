@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sign Up · ChatShare</title>
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div class="auth-wrap">
+    <div class="auth-card">
+      <div class="brand-badge">✨ Create Your Account</div>
+      <h1>Join ChatShare</h1>
+      <p class="sub">Pick a unique username — it's how friends will chat with you, react with emojis, and share files.</p>
+      
+      <div class="register-preview" id="previewBox">
+        <img id="previewAvatar" class="register-preview-avatar" src="/api/avatar/user" alt="Profile Preview">
+        <div class="register-preview-info">
+          <span class="register-preview-title">Your Generated Avatar</span>
+          <span class="register-preview-name" id="previewUsername">@user</span>
+        </div>
+      </div>
+
+      <div id="msg"></div>
+      <form id="registerForm">
+        <label for="username">Username</label>
+        <input type="text" id="username" placeholder="e.g. john_doe" autocomplete="username" required>
+        <label for="password">Password</label>
+        <input type="password" id="password" placeholder="At least 6 characters" autocomplete="new-password" required>
+        <button type="submit" class="btn-primary">Create Account ✨</button>
+      </form>
+      <div class="switch-link">
+        Already have an account? <a href="/login.html">Log in</a>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const form = document.getElementById('registerForm');
+    const usernameInput = document.getElementById('username');
+    const previewAvatar = document.getElementById('previewAvatar');
+    const previewUsername = document.getElementById('previewUsername');
+    const msgEl = document.getElementById('msg');
+
+    usernameInput.addEventListener('input', () => {
+      const val = usernameInput.value.trim();
+      const display = val || 'user';
+      previewUsername.textContent = '@' + display;
+      previewAvatar.src = `/api/avatar/${encodeURIComponent(display)}`;
+    });
+
+    function showMsg(text, type) {
+      msgEl.innerHTML = `<div class="msg ${type}">${text}</div>`;
+    }
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const username = usernameInput.value.trim();
+      const password = document.getElementById('password').value;
+      try {
+        const res = await fetch('/api/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password })
+        });
+        const data = await res.json();
+        if (!res.ok) return showMsg(data.error || 'Registration failed', 'error');
+        showMsg('Account created! Redirecting to login…', 'success');
+        setTimeout(() => window.location.href = '/login.html', 1200);
+      } catch (err) {
+        showMsg('Network error. Please try again.', 'error');
+      }
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ChatShare</title>
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div class="app">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <div class="profile-summary" id="myProfileBtn" title="Click to change your profile picture anytime">
+          <div class="my-avatar-wrapper">
+            <img id="myAvatarImg" class="avatar-img" src="/api/avatar/User" alt="My Profile">
+            <span class="avatar-edit-badge" title="Change profile photo">📷</span>
+          </div>
+          <div class="my-info">
+            <div class="my-name-row">
+              <span class="my-name" id="myUsername">…</span>
+              <span id="adminBadge" class="badge badge-admin hidden">Admin</span>
+            </div>
+            <span class="status-indicator"><span class="dot"></span>Online · <span class="change-photo-link">Change photo</span></span>
+          </div>
+        </div>
+        <button class="logout-btn" id="logoutBtn" title="Sign out">Log out</button>
+      </div>
+
+      <!-- Admin Navigation (Visible only to Admin) -->
+      <div id="adminNavSection" class="sidebar-nav-section hidden">
+        <div class="nav-tabs">
+          <button class="nav-tab active" id="tabChatViewBtn">💬 Chat</button>
+          <button class="nav-tab" id="tabAdminViewBtn">🛡️ Admin Panel</button>
+        </div>
+      </div>
+
+      <div class="sidebar-section-title" id="sidebarListTitle">Conversations</div>
+      <div class="user-list" id="userList">
+        <div class="empty-state" style="margin-top:20px;">Loading users…</div>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="main">
+      <!-- 1. Normal Chat View -->
+      <div id="chatView" class="view-panel">
+        <div class="chat-header" id="chatHeader">
+          <div class="chat-header-user">
+            <img id="chatHeaderAvatar" class="avatar-img hidden" src="" alt="Contact">
+            <div class="chat-header-info">
+              <div class="chat-header-title" id="chatHeaderTitle">Select a user to start chatting</div>
+              <div class="chat-header-subtitle hidden" id="chatHeaderSubtitle">Direct Message</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="chat-body" id="chatBody">
+          <div class="empty-state">Pick someone from the left to chat or share a file with them.</div>
+        </div>
+
+        <div class="composer-wrap">
+          <!-- Floating Emoji Picker Popup -->
+          <div class="emoji-picker hidden" id="emojiPicker">
+            <div class="emoji-picker-header">
+              <div class="emoji-search-wrap">
+                <input type="text" id="emojiSearchInput" class="emoji-search-input" placeholder="Search emojis… (e.g. smile, fire, heart)" autocomplete="off">
+              </div>
+              <div class="emoji-tabs" id="emojiTabs">
+                <button class="emoji-tab-btn active" data-category="smileys" title="Smileys & Faces">😀</button>
+                <button class="emoji-tab-btn" data-category="gestures" title="Gestures & People">👋</button>
+                <button class="emoji-tab-btn" data-category="hearts" title="Hearts & Love">❤️</button>
+                <button class="emoji-tab-btn" data-category="fun" title="Party & Fun">🎉</button>
+                <button class="emoji-tab-btn" data-category="objects" title="Objects & Fire">🔥</button>
+              </div>
+            </div>
+            <div class="emoji-picker-body" id="emojiPickerBody">
+              <!-- Emojis populated dynamically by js -->
+            </div>
+          </div>
+
+          <div class="composer hidden" id="composer">
+            <button class="icon-btn" id="attachBtn" title="Send a file">📎</button>
+            <button class="icon-btn" id="emojiToggleBtn" title="Choose emoji">😊</button>
+            <input type="file" id="fileInput" class="hidden">
+            <input type="text" id="messageInput" placeholder="Type a message or add emojis…" autocomplete="off">
+            <button class="send-btn" id="sendBtn">Send</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 2. Admin Dashboard View (Visible only to Admin) -->
+      <div id="adminView" class="view-panel hidden">
+        <div class="admin-header">
+          <div class="admin-header-title-wrap">
+            <h2>🛡️ Admin Control Center</h2>
+            <p class="sub">System monitoring, user moderation (block / delete), and conversation logs</p>
+          </div>
+          <button class="btn-secondary" id="refreshAdminBtn" title="Refresh data">🔄 Refresh</button>
+        </div>
+
+        <div class="admin-body">
+          <!-- Stats Cards -->
+          <div class="metrics-grid">
+            <div class="metric-card">
+              <span class="metric-label">Total Users</span>
+              <span class="metric-value" id="statTotalUsers">0</span>
+            </div>
+            <div class="metric-card">
+              <span class="metric-label">Active Users</span>
+              <span class="metric-value text-success" id="statActiveUsers">0</span>
+            </div>
+            <div class="metric-card">
+              <span class="metric-label">Blocked Users</span>
+              <span class="metric-value text-danger" id="statBlockedUsers">0</span>
+            </div>
+            <div class="metric-card">
+              <span class="metric-label">Total Messages</span>
+              <span class="metric-value text-accent" id="statTotalMessages">0</span>
+            </div>
+            <div class="metric-card">
+              <span class="metric-label">Files Shared</span>
+              <span class="metric-value" id="statTotalFiles">0</span>
+            </div>
+          </div>
+
+          <!-- Section: User Moderation -->
+          <div class="admin-section">
+            <div class="admin-section-header">
+              <h3>User Management & Moderation</h3>
+              <span class="admin-section-hint">Block or delete accounts instantly</span>
+            </div>
+
+            <div class="admin-table-wrap">
+              <table class="admin-table">
+                <thead>
+                  <tr>
+                    <th>User</th>
+                    <th>Role</th>
+                    <th>Status</th>
+                    <th>Registered</th>
+                    <th style="text-align:right;">Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="adminUsersTableBody">
+                  <tr><td colspan="5" style="text-align:center;color:var(--muted);">Loading users…</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Section: Conversation & File Inspector -->
+          <div class="admin-section">
+            <div class="admin-section-header">
+              <h3>Live Conversation & File Inspector</h3>
+              <span class="admin-section-hint">Admin monitoring of all user-to-user interactions</span>
+            </div>
+
+            <div class="inspector-layout">
+              <div class="inspector-sidebar">
+                <div class="inspector-threads-title">Active Conversations</div>
+                <div class="inspector-threads-list" id="adminThreadsList">
+                  <div class="empty-state">Loading conversations…</div>
+                </div>
+              </div>
+
+              <div class="inspector-content">
+                <div class="inspector-header" id="inspectorHeader">
+                  Select a conversation from the left to inspect messages and files
+                </div>
+                <div class="inspector-body" id="inspectorBody">
+                  <div class="empty-state">No conversation selected</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- Avatar Upload Modal (Available anytime to every user) -->
+  <div class="modal-backdrop hidden" id="avatarModal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>Change Profile Picture</h3>
+        <button class="close-btn" id="closeAvatarModalBtn">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="avatar-preview-container">
+          <img id="avatarPreviewImg" class="avatar-img-lg" src="" alt="Preview">
+        </div>
+        <div class="avatar-file-dropzone" id="avatarDropzone">
+          <p>Click or drag & drop an image here</p>
+          <span class="hint">Supports JPG, PNG, WebP or GIF (max 5MB)</span>
+          <input type="file" id="avatarFileInput" accept="image/png,image/jpeg,image/webp,image/gif" class="hidden">
+        </div>
+        <div id="avatarModalMsg" class="msg hidden"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" id="cancelAvatarBtn">Cancel</button>
+        <button class="btn-primary" id="saveAvatarBtn">Save Picture</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/js/dashboard.js"></script>
+</body>
+</html>

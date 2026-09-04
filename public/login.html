@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Log In · ChatShare</title>
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div class="auth-wrap">
+    <div class="auth-card">
+      <div class="brand-badge">✨ Instant Private Chat & File Share</div>
+      <h1>Welcome back</h1>
+      <p class="sub">Log in with your unique username and password to start chatting.</p>
+      <div id="msg"></div>
+      <form id="loginForm">
+        <label for="username">Username</label>
+        <input type="text" id="username" placeholder="e.g. praveen or your username" autocomplete="username" required>
+        <label for="password">Password</label>
+        <input type="password" id="password" placeholder="Enter your password" autocomplete="current-password" required>
+        <button type="submit" class="btn-primary">Log In 🚀</button>
+      </form>
+      <div class="switch-link">
+        Don't have an account? <a href="/register.html">Create an account</a>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const form = document.getElementById('loginForm');
+    const msgEl = document.getElementById('msg');
+
+    function showMsg(text, type) {
+      msgEl.innerHTML = `<div class="msg ${type}">${text}</div>`;
+    }
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const username = document.getElementById('username').value.trim();
+      const password = document.getElementById('password').value;
+      try {
+        const res = await fetch('/api/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password })
+        });
+        const data = await res.json();
+        if (!res.ok) return showMsg(data.error || 'Login failed', 'error');
+        window.location.href = '/dashboard.html';
+      } catch (err) {
+        showMsg('Network error. Please try again.', 'error');
+      }
+    });
+  </script>
+</body>
+</html>
