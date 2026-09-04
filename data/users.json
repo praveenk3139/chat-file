@@ -3,7 +3,9 @@
     "passwordHash": "$2a$10$O956oNfaKSwRxEL.M1jVpebOCUVmLZu5O00Lv3LI0pS3n8dkLiC/u",
     "createdAt": 1788529442182,
     "isAdmin": true,
-    "isBlocked": false
+    "isBlocked": false,
+    "avatarFile": "avatar_praveen_1788529759786.jpg",
+    "avatarUpdatedAt": 1788529759803
   },
   "alex": {
     "passwordHash": "$2a$10$Tci6iHXWORsZMT83qNLBveoMkWJ/YuscQv7scC3HS6S9XxSnucXEa",
@@ -20,6 +22,12 @@
   "support": {
     "passwordHash": "$2a$10$Tci6iHXWORsZMT83qNLBveoMkWJ/YuscQv7scC3HS6S9XxSnucXEa",
     "createdAt": 1788529520000,
+    "isAdmin": false,
+    "isBlocked": false
+  },
+  "qwen": {
+    "passwordHash": "$2a$10$8n4fqLeEsGEfyEvo/KGDK.sVu7ZuItuVXcLWFbKaywhia9tbTQbkK",
+    "createdAt": 1788550413419,
     "isAdmin": false,
     "isBlocked": false
   }
