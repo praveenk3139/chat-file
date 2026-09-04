@@ -24,8 +24,11 @@ const SESSION_SECRET = process.env.SESSION_SECRET || 'change-this-secret-in-prod
 const ADMIN_USERNAME = 'praveen';
 const ADMIN_PASSWORD = '3139';
 
-const DATA_DIR = path.join(__dirname, 'data');
-const UPLOAD_DIR = path.join(__dirname, 'uploads');
+const isVercel = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+const BASE_STORAGE = isVercel ? path.join('/tmp', 'chat-file-share') : __dirname;
+
+const DATA_DIR = path.join(BASE_STORAGE, 'data');
+const UPLOAD_DIR = path.join(BASE_STORAGE, 'uploads');
 const AVATAR_DIR = path.join(UPLOAD_DIR, 'avatars');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const MESSAGES_FILE = path.join(DATA_DIR, 'messages.json');
@@ -33,10 +36,29 @@ const FILES_FILE = path.join(DATA_DIR, 'files.json');
 
 // ---------- bootstrap data files/folders ----------
 for (const dir of [DATA_DIR, UPLOAD_DIR, AVATAR_DIR]) {
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  try {
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  } catch (err) {
+    console.error(`Directory creation warning (${dir}):`, err.message);
+  }
 }
-for (const [file, initial] of [[USERS_FILE, {}], [MESSAGES_FILE, []], [FILES_FILE, []]]) {
-  if (!fs.existsSync(file)) fs.writeFileSync(file, JSON.stringify(initial, null, 2));
+for (const [file, initial, defaultFileName] of [
+  [USERS_FILE, {}, 'users.json'],
+  [MESSAGES_FILE, [], 'messages.json'],
+  [FILES_FILE, [], 'files.json']
+]) {
+  try {
+    if (!fs.existsSync(file)) {
+      const seedFile = path.join(__dirname, 'data', defaultFileName);
+      if (isVercel && fs.existsSync(seedFile)) {
+        fs.copyFileSync(seedFile, file);
+      } else {
+        fs.writeFileSync(file, JSON.stringify(initial, null, 2));
+      }
+    }
+  } catch (err) {
+    console.error(`File init warning (${file}):`, err.message);
+  }
 }
 
 function readJSON(file) {
@@ -129,8 +151,11 @@ function getUserAvatarUrl(userRecord, username) {
 // ---------- express app ----------
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server);
+const io = new Server(server, {
+  cors: { origin: '*' }
+});
 
+app.set('trust proxy', 1);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -138,7 +163,11 @@ const sessionMiddleware = session({
   secret: SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
-  cookie: { httpOnly: true, maxAge: 1000 * 60 * 60 * 24 * 7 } // 7 days
+  cookie: {
+    httpOnly: true,
+    maxAge: 1000 * 60 * 60 * 24 * 7,
+    sameSite: 'lax'
+  }
 });
 app.use(sessionMiddleware);
 
@@ -354,6 +383,63 @@ app.get('/api/messages/:withUser', requireAuth, (req, res) => {
     avatarUrl: m.avatarUrl || getUserAvatarUrl(users[m.from], m.from)
   }));
   res.json({ messages: thread });
+});
+
+// HTTP fallback for sending chat messages (essential for serverless environments like Vercel)
+app.post('/api/messages/send', requireAuth, (req, res) => {
+  const { to, text } = req.body || {};
+  const cleanText = String(text || '').trim();
+  if (!to || !cleanText) {
+    return res.status(400).json({ error: 'Recipient and message text are required' });
+  }
+
+  const users = readJSON(USERS_FILE);
+  if (!users[to]) {
+    return res.status(404).json({ error: `User "${to}" does not exist` });
+  }
+  if (users[to].isBlocked) {
+    return res.status(403).json({ error: `Cannot message "${to}" because this account is blocked.` });
+  }
+
+  const sender = users[req.session.username];
+  const avatarUrl = getUserAvatarUrl(sender, req.session.username);
+
+  const message = {
+    id: nanoid(),
+    from: req.session.username,
+    to,
+    text: cleanText,
+    avatarUrl,
+    timestamp: Date.now()
+  };
+
+  const all = readJSON(MESSAGES_FILE);
+  all.push(message);
+  writeJSON(MESSAGES_FILE, all);
+
+  try {
+    io.to(to).emit('private-message', message);
+    io.to(req.session.username).emit('private-message', message);
+  } catch (e) {}
+
+  res.json({ ok: true, message });
+});
+
+// Incremental message polling endpoint for serverless/Vercel clients
+app.get('/api/messages/:withUser/poll', requireAuth, (req, res) => {
+  const me = req.session.username;
+  const other = req.params.withUser;
+  const since = parseInt(req.query.since || '0', 10);
+  const key = roomKeyFor(me, other);
+  const all = readJSON(MESSAGES_FILE);
+  const users = readJSON(USERS_FILE);
+  const newMessages = all
+    .filter(m => roomKeyFor(m.from, m.to) === key && m.timestamp > since)
+    .map(m => ({
+      ...m,
+      avatarUrl: m.avatarUrl || getUserAvatarUrl(users[m.from], m.from)
+    }));
+  res.json({ messages: newMessages });
 });
 
 // ---------- FILE SHARING ----------
@@ -698,7 +784,12 @@ io.on('connection', (socket) => {
   });
 });
 
-server.listen(PORT, () => {
-  console.log(`Chat + File Share server running on http://localhost:${PORT}`);
-  console.log(`Admin account enabled: ${ADMIN_USERNAME} / ${ADMIN_PASSWORD}`);
-});
+if (require.main === module || !process.env.VERCEL) {
+  server.listen(PORT, () => {
+    console.log(`Chat + File Share server running on http://localhost:${PORT}`);
+    console.log(`Admin account enabled: ${ADMIN_USERNAME} / ${ADMIN_PASSWORD}`);
+  });
+}
+
+module.exports = app;
+module.exports.server = server;

@@ -3,6 +3,9 @@ let socket = null;
 let activeUser = null;
 const userAvatars = new Map();
 const messageReactions = new Map(); // msgId -> { [emoji]: count }
+const renderedMessageIds = new Set();
+let chatPollInterval = null;
+let lastMessageTs = 0;
 
 // General UI elements
 const userListEl = document.getElementById('userList');
@@ -121,14 +124,29 @@ async function init() {
   localStorage.removeItem('chatshare_bg_opacity');
   document.body.removeAttribute('data-theme');
 
-  socket = io({ auth: { token: me.socketToken } });
+  try {
+    socket = io({
+      auth: { token: me.socketToken },
+      transports: ['polling', 'websocket'],
+      reconnectionAttempts: 5,
+      timeout: 5000
+    });
 
-  socket.on('private-message', (msg) => {
-    if (activeUser && (msg.from === activeUser || msg.to === activeUser)) {
-      renderMessage(msg);
-      scrollToBottom();
-    }
-  });
+    socket.on('connect_error', (err) => {
+      console.log('Socket fallback active:', err.message);
+    });
+
+    socket.on('private-message', (msg) => {
+      if (activeUser && (msg.from === activeUser || msg.to === activeUser)) {
+        if (!renderedMessageIds.has(msg.id)) {
+          renderMessage(msg);
+          scrollToBottom();
+        }
+      }
+    });
+  } catch (err) {
+    console.warn('Socket init exception:', err);
+  }
 
   socket.on('file-shared', (file) => {
     if (activeUser && (file.from === activeUser || file.to === activeUser)) {
@@ -344,6 +362,10 @@ async function selectUser(username) {
   chatHeaderSubtitle.innerHTML = `<span class="dot"></span> Online · Direct Message`;
   chatHeaderSubtitle.classList.remove('hidden');
 
+  if (chatPollInterval) clearInterval(chatPollInterval);
+  renderedMessageIds.clear();
+  lastMessageTs = 0;
+
   composerEl.classList.remove('hidden');
   chatBodyEl.innerHTML = '<div class="empty-state">Loading conversation…</div>';
 
@@ -371,9 +393,36 @@ async function selectUser(username) {
     });
   }
   scrollToBottom();
+
+  // Background polling fallback for serverless platforms like Vercel
+  chatPollInterval = setInterval(async () => {
+    if (!activeUser || activeUser !== username) return;
+    try {
+      const pRes = await fetch(`/api/messages/${encodeURIComponent(username)}/poll?since=${lastMessageTs}`);
+      if (!pRes.ok) return;
+      const pData = await pRes.json();
+      if (pData.messages && pData.messages.length) {
+        let hasNew = false;
+        pData.messages.forEach(m => {
+          if (!renderedMessageIds.has(m.id)) {
+            renderMessage(m);
+            hasNew = true;
+          }
+        });
+        if (hasNew) scrollToBottom();
+      }
+    } catch (e) {}
+  }, 2500);
 }
 
 function renderMessage(msg) {
+  if (!msg || !msg.id) return;
+  if (renderedMessageIds.has(msg.id)) return;
+  renderedMessageIds.add(msg.id);
+  if (msg.timestamp && msg.timestamp > lastMessageTs) {
+    lastMessageTs = msg.timestamp;
+  }
+
   const mine = msg.from === me.username;
   const avatarUrl = msg.avatarUrl || getAvatar(msg.from);
 
@@ -470,13 +519,35 @@ messageInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') sendMessage();
 });
 
-function sendMessage() {
+async function sendMessage() {
   const text = messageInput.value.trim();
   if (!text || !activeUser) return;
-  socket.emit('private-message', { to: activeUser, text });
+  const targetUser = activeUser;
   messageInput.value = '';
   emojiPicker.classList.add('hidden');
   emojiToggleBtn.classList.remove('active');
+
+  if (socket && socket.connected) {
+    socket.emit('private-message', { to: targetUser, text });
+  }
+
+  // Also send via HTTP for Vercel/serverless environments
+  try {
+    const res = await fetch('/api/messages/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ to: targetUser, text })
+    });
+    const data = await res.json();
+    if (res.ok && data.message) {
+      if (!renderedMessageIds.has(data.message.id)) {
+        renderMessage(data.message);
+        scrollToBottom();
+      }
+    }
+  } catch (err) {
+    console.error('Failed to send message via HTTP:', err);
+  }
 }
 
 attachBtn.addEventListener('click', () => {
