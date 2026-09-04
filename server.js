@@ -10,6 +10,7 @@
 
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const express = require('express');
 const session = require('express-session');
 const bcrypt = require('bcryptjs');
@@ -61,40 +62,112 @@ for (const [file, initial, defaultFileName] of [
   }
 }
 
-function readJSON(file) {
-  try {
-    return JSON.parse(fs.readFileSync(file, 'utf8'));
-  } catch (e) {
-    return file === USERS_FILE ? {} : [];
-  }
-}
-function writeJSON(file, data) {
-  fs.writeFileSync(file, JSON.stringify(data, null, 2));
+const DEFAULT_ACCOUNTS = [
+  { username: 'praveen', isAdmin: true, password: ADMIN_PASSWORD },
+  { username: 'alex', isAdmin: false, password: 'password123' },
+  { username: 'sarah', isAdmin: false, password: 'password123' },
+  { username: 'support', isAdmin: false, password: 'password123' }
+];
+
+function signToken(payload) {
+  const jsonStr = JSON.stringify(payload);
+  const b64 = Buffer.from(jsonStr).toString('base64url');
+  const sig = crypto.createHmac('sha256', SESSION_SECRET).update(b64).digest('base64url');
+  return `${b64}.${sig}`;
 }
 
-// ---------- seed admin user ----------
-function ensureAdminUser() {
-  const users = readJSON(USERS_FILE);
-  const current = users[ADMIN_USERNAME];
-  if (!current) {
-    users[ADMIN_USERNAME] = {
-      passwordHash: bcrypt.hashSync(ADMIN_PASSWORD, 10),
-      createdAt: Date.now(),
-      isAdmin: true,
-      isBlocked: false
-    };
-    writeJSON(USERS_FILE, users);
-    console.log(`Admin user "${ADMIN_USERNAME}" seeded successfully.`);
-  } else {
-    users[ADMIN_USERNAME].isAdmin = true;
-    users[ADMIN_USERNAME].isBlocked = false;
-    if (!bcrypt.compareSync(ADMIN_PASSWORD, current.passwordHash)) {
-      users[ADMIN_USERNAME].passwordHash = bcrypt.hashSync(ADMIN_PASSWORD, 10);
+function verifyToken(token) {
+  if (!token || typeof token !== 'string') return null;
+  const parts = token.split('.');
+  if (parts.length !== 2) return null;
+  const [b64, sig] = parts;
+  const expected = crypto.createHmac('sha256', SESSION_SECRET).update(b64).digest('base64url');
+  if (sig !== expected) return null;
+  try {
+    return JSON.parse(Buffer.from(b64, 'base64url').toString('utf8'));
+  } catch (e) {
+    return null;
+  }
+}
+
+function readJSON(file) {
+  try {
+    const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (file === USERS_FILE) {
+      let changed = false;
+      for (const acc of DEFAULT_ACCOUNTS) {
+        if (!data[acc.username]) {
+          data[acc.username] = {
+            passwordHash: bcrypt.hashSync(acc.password, 10),
+            createdAt: Date.now(),
+            isAdmin: !!acc.isAdmin,
+            isBlocked: false
+          };
+          changed = true;
+        }
+      }
+      if (changed) {
+        try { writeJSON(USERS_FILE, data); } catch (e) {}
+      }
     }
+    return data;
+  } catch (e) {
+    if (file === USERS_FILE) {
+      const initUsers = {};
+      for (const acc of DEFAULT_ACCOUNTS) {
+        initUsers[acc.username] = {
+          passwordHash: bcrypt.hashSync(acc.password, 10),
+          createdAt: Date.now(),
+          isAdmin: !!acc.isAdmin,
+          isBlocked: false
+        };
+      }
+      try { writeJSON(USERS_FILE, initUsers); } catch (err) {}
+      return initUsers;
+    }
+    return [];
+  }
+}
+
+function writeJSON(file, data) {
+  try {
+    fs.writeFileSync(file, JSON.stringify(data, null, 2));
+  } catch (err) {
+    console.error(`Error writing JSON (${file}):`, err.message);
+  }
+}
+
+// ---------- seed default accounts ----------
+function ensureDefaultUsers() {
+  const users = readJSON(USERS_FILE);
+  let changed = false;
+
+  for (const acc of DEFAULT_ACCOUNTS) {
+    if (!users[acc.username]) {
+      users[acc.username] = {
+        passwordHash: bcrypt.hashSync(acc.password, 10),
+        createdAt: Date.now(),
+        isAdmin: !!acc.isAdmin,
+        isBlocked: false
+      };
+      changed = true;
+    } else {
+      if (acc.isAdmin && !users[acc.username].isAdmin) {
+        users[acc.username].isAdmin = true;
+        changed = true;
+      }
+      if (acc.username === ADMIN_USERNAME && !bcrypt.compareSync(ADMIN_PASSWORD, users[ADMIN_USERNAME].passwordHash)) {
+        users[ADMIN_USERNAME].passwordHash = bcrypt.hashSync(ADMIN_PASSWORD, 10);
+        changed = true;
+      }
+    }
+  }
+
+  if (changed) {
     writeJSON(USERS_FILE, users);
   }
 }
-ensureAdminUser();
+ensureDefaultUsers();
 
 function escapeXml(str) {
   return String(str || '')
@@ -173,25 +246,62 @@ app.use(sessionMiddleware);
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-// in-memory map of live socket auth tokens -> username (issued at login)
+// In-flight socket auth tokens
 const socketTokens = new Map();
 
+function getAuthUser(req) {
+  if (req.session && req.session.username) {
+    return { username: req.session.username, isAdmin: !!req.session.isAdmin };
+  }
+  const cookieHeader = req.headers && req.headers.cookie;
+  if (cookieHeader) {
+    const match = cookieHeader.match(/(?:^|;\s*)auth_token=([^;]+)/);
+    if (match) {
+      const payload = verifyToken(match[1]);
+      if (payload && payload.username) {
+        if (req.session) {
+          req.session.username = payload.username;
+          req.session.isAdmin = !!payload.isAdmin;
+        }
+        return payload;
+      }
+    }
+  }
+  return null;
+}
+
+// Seamless auth restoration middleware for multi-instance serverless (Vercel)
+app.use((req, res, next) => {
+  const auth = getAuthUser(req);
+  if (auth) {
+    req.authUser = auth;
+    if (req.session && !req.session.username) {
+      req.session.username = auth.username;
+      req.session.isAdmin = !!auth.isAdmin;
+    }
+  }
+  next();
+});
+
 function requireAuth(req, res, next) {
-  if (!req.session.username) return res.status(401).json({ error: 'Not logged in' });
+  const authUser = (req.session && req.session.username) || (req.authUser && req.authUser.username);
+  if (!authUser) return res.status(401).json({ error: 'Not logged in' });
   const users = readJSON(USERS_FILE);
-  const user = users[req.session.username];
+  const user = users[authUser];
   if (!user) return res.status(401).json({ error: 'User account not found' });
   if (user.isBlocked) {
-    req.session.destroy(() => {});
+    if (req.session) req.session.destroy(() => {});
+    res.clearCookie('auth_token');
     return res.status(403).json({ error: 'Your account has been blocked by the admin.' });
   }
   next();
 }
 
 function requireAdmin(req, res, next) {
-  if (!req.session.username) return res.status(401).json({ error: 'Not logged in' });
+  const authUser = (req.session && req.session.username) || (req.authUser && req.authUser.username);
+  if (!authUser) return res.status(401).json({ error: 'Not logged in' });
   const users = readJSON(USERS_FILE);
-  const user = users[req.session.username];
+  const user = users[authUser];
   if (!user || !user.isAdmin) {
     return res.status(403).json({ error: 'Access denied: Admin privileges required.' });
   }
@@ -254,6 +364,14 @@ app.post('/api/login', (req, res) => {
   socketTokens.set(token, username);
   req.session.socketToken = token;
 
+  // Set signed token cookie to survive across serverless lambda containers
+  const authToken = signToken({ username, isAdmin: !!record.isAdmin });
+  res.cookie('auth_token', authToken, {
+    httpOnly: true,
+    maxAge: 1000 * 60 * 60 * 24 * 7,
+    sameSite: 'lax'
+  });
+
   const avatarUrl = getUserAvatarUrl(record, username);
   res.json({
     ok: true,
@@ -265,9 +383,14 @@ app.post('/api/login', (req, res) => {
 });
 
 app.post('/api/logout', (req, res) => {
-  const token = req.session.socketToken;
+  const token = req.session && req.session.socketToken;
   if (token) socketTokens.delete(token);
-  req.session.destroy(() => res.json({ ok: true }));
+  res.clearCookie('auth_token');
+  if (req.session) {
+    req.session.destroy(() => res.json({ ok: true }));
+  } else {
+    res.json({ ok: true });
+  }
 });
 
 app.get('/api/me', requireAuth, (req, res) => {
@@ -718,7 +841,8 @@ app.delete('/api/admin/files/:id', requireAdmin, (req, res) => {
 
 // ---------- fallback routes for pages ----------
 app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', req.session.username ? 'dashboard.html' : 'login.html'));
+  const auth = getAuthUser(req);
+  res.sendFile(path.join(__dirname, 'public', auth ? 'dashboard.html' : 'login.html'));
 });
 
 // ---------- SOCKET.IO (real-time chat) ----------
@@ -784,7 +908,7 @@ io.on('connection', (socket) => {
   });
 });
 
-if (require.main === module || !process.env.VERCEL) {
+if (require.main === module) {
   server.listen(PORT, () => {
     console.log(`Chat + File Share server running on http://localhost:${PORT}`);
     console.log(`Admin account enabled: ${ADMIN_USERNAME} / ${ADMIN_PASSWORD}`);

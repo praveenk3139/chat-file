@@ -219,6 +219,16 @@ async function init() {
   });
 
   await loadUsers();
+
+  // Periodically refresh user list so newly registered users appear automatically without WebSockets
+  setInterval(loadUsers, 4000);
+
+  // Periodically refresh admin dashboard if currently open
+  setInterval(() => {
+    if (me && me.isAdmin && adminView && !adminView.classList.contains('hidden')) {
+      loadAdminData();
+    }
+  }, 5000);
 }
 
 // ---------- EMOJI PICKER SYSTEM ----------
@@ -318,13 +328,18 @@ function insertEmoji(emoji) {
 // ---------- USER LIST & CHAT ----------
 
 async function loadUsers() {
-  const res = await fetch('/api/users');
-  const data = await res.json();
-  if (!data.users || !data.users.length) {
-    userListEl.innerHTML = '<div class="empty-state" style="margin-top:20px;">No other active users yet.<br>Invite someone to sign up!</div>';
-    return;
-  }
-  userListEl.innerHTML = '';
+  try {
+    const res = await fetch('/api/users');
+    if (res.status === 401) {
+      window.location.href = '/login.html';
+      return;
+    }
+    const data = await res.json();
+    if (!data.users || !data.users.length) {
+      userListEl.innerHTML = '<div class="empty-state" style="margin-top:20px;">No other active users yet.<br>Invite someone to sign up!</div>';
+      return;
+    }
+    userListEl.innerHTML = '';
   data.users.forEach(item => {
     const u = typeof item === 'string' ? item : item.username;
     const avatarUrl = (typeof item === 'object' && item.avatarUrl) ? item.avatarUrl : `/api/avatar/${encodeURIComponent(u)}`;
@@ -341,12 +356,15 @@ async function loadUsers() {
         <span class="user-item-name">${escapeHtml(u)}</span>
       </div>
     `;
-    el.addEventListener('click', () => {
-      switchView('chat');
-      selectUser(u);
+      el.addEventListener('click', () => {
+        switchView('chat');
+        selectUser(u);
+      });
+      userListEl.appendChild(el);
     });
-    userListEl.appendChild(el);
-  });
+  } catch (err) {
+    console.error('Failed to load users:', err);
+  }
 }
 
 async function selectUser(username) {
