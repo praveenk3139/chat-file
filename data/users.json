@@ -30,5 +30,11 @@
     "createdAt": 1788550413419,
     "isAdmin": false,
     "isBlocked": false
+  },
+  "sanjay.k": {
+    "passwordHash": "$2a$10$g1BX18s9q2DLEZgVj0qDp.9nFGKMC6Z9c6wqIu9eOO.hXCgOUsmn.",
+    "createdAt": 1788551256341,
+    "isAdmin": false,
+    "isBlocked": false
   }
 }
