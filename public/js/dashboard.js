@@ -559,6 +559,12 @@ async function selectUser(username) {
 function renderMessage(msg) {
   if (!msg || !msg.id) return;
   if (renderedMessageIds.has(msg.id)) return;
+  
+  // Check if message is already in DOM
+  if (chatBodyEl.querySelector(`.msg-row[data-msg-id="${msg.id}"]`)) {
+    renderedMessageIds.add(msg.id);
+    return;
+  }
   renderedMessageIds.add(msg.id);
 
   const emptyEl = chatBodyEl.querySelector('.empty-state');
@@ -675,47 +681,46 @@ async function sendMessage() {
   emojiPicker.classList.add('hidden');
   emojiToggleBtn.classList.remove('active');
 
-  // Optimistic local echo for instant feedback
-  const tempMsg = {
-    id: 'local_' + Date.now(),
-    from: me.username,
-    to: targetUser,
+  const clientMsgId = 'msg_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8);
+
+  // Update recent conversation snippet immediately
+  threadSnippets.set(targetUser, {
     text,
-    avatarUrl: me.avatarUrl,
-    timestamp: Date.now()
-  };
-  renderMessage(tempMsg);
-  scrollToBottom();
+    timestamp: Date.now(),
+    from: me.username
+  });
+  updateUserItemPreview(targetUser);
 
   if (socket && socket.connected) {
-    socket.emit('private-message', { to: targetUser, text });
-  }
+    // 1. Send via WebSocket (Instant single delivery)
+    socket.emit('private-message', { id: clientMsgId, to: targetUser, text });
+  } else {
+    // 2. HTTP Fallback for serverless
+    const tempMsg = {
+      id: clientMsgId,
+      from: me.username,
+      to: targetUser,
+      text,
+      avatarUrl: me.avatarUrl,
+      timestamp: Date.now()
+    };
+    renderMessage(tempMsg);
+    scrollToBottom();
 
-  // Send via HTTP (guarantees delivery on serverless)
-  try {
-    const res = await fetch('/api/messages', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ to: targetUser, text })
-    });
-    const data = await res.json();
-    if (res.ok && data.message) {
-      renderedMessageIds.add(data.message.id);
-      threadSnippets.set(targetUser, {
-        text,
-        timestamp: data.message.timestamp,
-        from: me.username
+    try {
+      const res = await fetch('/api/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: clientMsgId, to: targetUser, text })
       });
-      updateUserItemPreview(targetUser);
-    } else if (data && data.error) {
-      alert(data.error);
+      const data = await res.json();
+      if (!res.ok && data && data.error) {
+        alert(data.error);
+      }
+    } catch (e) {
+      console.error('Failed to send message via HTTP:', e);
     }
-  } catch (e) {
-    console.error('Failed to send message via HTTP:', e);
   }
-
-  // Trigger sync tick
-  syncNow();
 }
 
 attachBtn.addEventListener('click', () => {

@@ -533,8 +533,10 @@ const handleSendMessage = async (req, res) => {
   const sender = req.user || await db.getUser(me);
   const avatarUrl = getUserAvatarUrl(sender, me);
 
+  const msgId = (req.body && req.body.id) || nanoid();
+
   const message = {
-    id: nanoid(),
+    id: msgId,
     from: me,
     to,
     text: cleanText,
@@ -921,8 +923,10 @@ io.on('connection', (socket) => {
       const sender = await db.getUser(socket.username);
       const avatarUrl = getUserAvatarUrl(sender, socket.username);
 
+      const msgId = (payload && payload.id) || nanoid();
+
       const message = {
-        id: nanoid(),
+        id: msgId,
         from: socket.username,
         to,
         text,
