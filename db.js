@@ -428,6 +428,12 @@ async function seedAndSync({ adminUsername, adminPasswordHash, seedPath }) {
           avatarUpdatedAt: udata.avatarUpdatedAt || null
         });
         console.log(`[MongoDB] Synced user "${uname}" into online MongoDB.`);
+      } else if (exists && udata && udata.passwordHash && exists.passwordHash !== udata.passwordHash) {
+        exists.passwordHash = udata.passwordHash;
+        if (udata.avatarFile) exists.avatarFile = udata.avatarFile;
+        if (udata.avatarUpdatedAt) exists.avatarUpdatedAt = udata.avatarUpdatedAt;
+        await exists.save();
+        console.log(`[MongoDB] Updated password/profile for user "${uname}" in online MongoDB.`);
       }
     }
 
