@@ -230,6 +230,8 @@ async function saveUser(username, data) {
       { upsert: true, returnDocument: 'after' }
     ).lean();
 
+    console.log(`[MongoDB] User "${username}" successfully saved to online MongoDB Atlas.`);
+
     // Mirror to local users.json for fast offline redundancy
     const users = readJSON(USERS_FILE, {});
     users[username] = { ...(users[username] || {}), ...data };
