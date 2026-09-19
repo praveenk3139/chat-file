@@ -4,7 +4,8 @@
   "description": "Multi-user login, private chat, and file sharing web app",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "sync-db": "node sync-mongo.js"
   },
   "engines": {
     "node": ">=18"
