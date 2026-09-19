@@ -43,6 +43,18 @@ const tabAdminViewBtn = document.getElementById('tabAdminViewBtn');
 const chatView = document.getElementById('chatView');
 const adminView = document.getElementById('adminView');
 
+// Command Mode & Voice Assistant Elements
+const commandModeToggleBtn = document.getElementById('commandModeToggleBtn');
+const cmdModeLabel = document.getElementById('cmdModeLabel');
+const cmdStatusDot = document.getElementById('cmdStatusDot');
+const commandHud = document.getElementById('commandHud');
+const commandHudText = document.getElementById('commandHudText');
+const commandHudDeactivateBtn = document.getElementById('commandHudDeactivateBtn');
+const voiceCmdBtn = document.getElementById('voiceCmdBtn');
+let isCommandModeActive = false;
+let isVoiceListening = false;
+let speechRecognition = null;
+
 // Admin Elements
 const statTotalUsers = document.getElementById('statTotalUsers');
 const statActiveUsers = document.getElementById('statActiveUsers');
@@ -126,6 +138,7 @@ async function init() {
   }
 
   setupEmojiPicker();
+  setupVoiceAssistant();
 
   // Socket.IO only when NOT in serverless mode (avoids 404 spam on Vercel)
   if (!me.isServerless && typeof io !== 'undefined') {
@@ -397,6 +410,238 @@ function insertEmoji(emoji) {
   const nextPos = start + emoji.length;
   input.selectionStart = input.selectionEnd = nextPos;
   input.focus();
+}
+
+// =========================================================
+// ---------- COMMAND MODE & VOICE ASSISTANT ---------------
+// =========================================================
+
+function speak(text) {
+  if ('speechSynthesis' in window) {
+    try {
+      window.speechSynthesis.cancel();
+      const utter = new SpeechSynthesisUtterance(text);
+      utter.rate = 1.05;
+      utter.pitch = 1.0;
+      window.speechSynthesis.speak(utter);
+    } catch (e) {}
+  }
+}
+
+function activateCommandMode(speakConfirmation = true) {
+  if (isCommandModeActive) return;
+  isCommandModeActive = true;
+  if (commandModeToggleBtn) commandModeToggleBtn.classList.add('active');
+  if (cmdModeLabel) cmdModeLabel.textContent = 'Command Mode ON';
+  if (commandHud) commandHud.classList.remove('hidden');
+  if (voiceCmdBtn) voiceCmdBtn.classList.add('active');
+  if (messageInput) {
+    messageInput.placeholder = '⚡ Command Mode ON — Speak or type a command (e.g. send hello, select user)…';
+  }
+  if (commandHudText) {
+    commandHudText.textContent = 'Listening… Say "send <message>", "select <user>", "attach file", or "turn off command mode"';
+  }
+  if (speakConfirmation) {
+    speak('Command mode activated');
+  }
+  startListening();
+}
+
+function deactivateCommandMode(speakConfirmation = true) {
+  if (!isCommandModeActive) return;
+  isCommandModeActive = false;
+  if (commandModeToggleBtn) commandModeToggleBtn.classList.remove('active');
+  if (cmdModeLabel) cmdModeLabel.textContent = 'Command Mode';
+  if (commandHud) commandHud.classList.add('hidden');
+  if (voiceCmdBtn) voiceCmdBtn.classList.remove('active', 'listening');
+  if (messageInput) {
+    messageInput.placeholder = 'Type a message, add emojis, or type "turn on command mode"…';
+  }
+  if (speakConfirmation) {
+    speak('Command mode deactivated');
+  }
+  stopListening();
+}
+
+function toggleCommandMode() {
+  if (isCommandModeActive) {
+    deactivateCommandMode(true);
+  } else {
+    activateCommandMode(true);
+  }
+}
+
+function handleCommand(rawText, fromVoice = false) {
+  if (!rawText) return false;
+  const clean = rawText.trim();
+  const lower = clean.toLowerCase();
+
+  // 1. Activation command
+  if (lower.includes('turn on command mode') || lower.includes('activate command mode') || lower === '/command on' || lower === 'command mode on') {
+    activateCommandMode(true);
+    return true;
+  }
+
+  // 2. Deactivation command
+  if (lower.includes('turn off command mode') || lower.includes('deactivate command mode') || lower.includes('exit command mode') || lower === '/command off' || lower === 'command mode off') {
+    deactivateCommandMode(true);
+    return true;
+  }
+
+  // If command mode is active, handle commands:
+  if (isCommandModeActive) {
+    // A. Send message command: "send message <text>", "send <text>", "say <text>", "tell <text>"
+    const sendMatch = clean.match(/^(?:send\s+message|send|say|tell\s+(?:him|her|them)?)\s+(.+)$/i);
+    if (sendMatch && sendMatch[1]) {
+      const msgToSend = sendMatch[1].trim();
+      if (msgToSend) {
+        if (!activeUser) {
+          speak('Please select a contact first');
+          return true;
+        }
+        messageInput.value = msgToSend;
+        sendMessage();
+        speak('Message sent');
+        return true;
+      }
+    }
+
+    // B. Select user command: "select <name>", "chat with <name>", "open <name>"
+    const selectMatch = clean.match(/^(?:select|chat\s+with|open|talk\s+to)\s+(.+)$/i);
+    if (selectMatch && selectMatch[1]) {
+      const targetQuery = selectMatch[1].trim().toLowerCase().replace(/\s+/g, '');
+      const found = cachedUsers.find(u => 
+        u.username.toLowerCase().replace(/[._-]/g, '').includes(targetQuery.replace(/[._-]/g, ''))
+      );
+      if (found) {
+        selectUser(found.username);
+        speak(`Chat opened with ${found.username}`);
+        return true;
+      } else {
+        speak(`User ${selectMatch[1]} not found`);
+        return true;
+      }
+    }
+
+    // C. Attach file command: "attach file", "send file", "upload file"
+    if (lower.includes('attach file') || lower.includes('send file') || lower.includes('upload file') || lower === 'attach' || lower === 'upload') {
+      if (!activeUser) {
+        speak('Please select a contact first');
+        return true;
+      }
+      fileInput.click();
+      speak('Opening file selector');
+      return true;
+    }
+
+    // D. Open emoji picker: "emoji", "open emoji", "choose emoji"
+    if (lower.includes('emoji') || lower.includes('choose emoji')) {
+      emojiPicker.classList.toggle('hidden');
+      emojiToggleBtn.classList.toggle('active');
+      speak('Emoji picker toggled');
+      return true;
+    }
+
+    // E. Clear message: "clear", "clear message", "reset"
+    if (lower === 'clear' || lower === 'clear message' || lower === 'cancel') {
+      messageInput.value = '';
+      speak('Message cleared');
+      return true;
+    }
+
+    // F. Logout command: "logout", "sign out"
+    if (lower === 'logout' || lower === 'sign out') {
+      speak('Logging out');
+      fetch('/api/logout', { method: 'POST' }).then(() => {
+        window.location.href = '/login.html';
+      });
+      return true;
+    }
+
+    // G. If from voice in command mode and didn't match specific keyword, send as message if activeUser selected
+    if (fromVoice && activeUser && clean.length > 1) {
+      messageInput.value = clean;
+      sendMessage();
+      speak('Message sent');
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function setupVoiceAssistant() {
+  const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+  
+  if (commandModeToggleBtn) {
+    commandModeToggleBtn.addEventListener('click', toggleCommandMode);
+  }
+  if (commandHudDeactivateBtn) {
+    commandHudDeactivateBtn.addEventListener('click', () => deactivateCommandMode(true));
+  }
+  if (voiceCmdBtn) {
+    voiceCmdBtn.addEventListener('click', () => {
+      toggleCommandMode();
+    });
+  }
+
+  if (SpeechRec) {
+    try {
+      speechRecognition = new SpeechRec();
+      speechRecognition.continuous = true;
+      speechRecognition.interimResults = false;
+      speechRecognition.lang = 'en-US';
+
+      speechRecognition.onstart = () => {
+        isVoiceListening = true;
+        if (voiceCmdBtn) voiceCmdBtn.classList.add('listening');
+        if (commandHudText && isCommandModeActive) {
+          commandHudText.textContent = '🎙️ Listening to your voice commands…';
+        }
+      };
+
+      speechRecognition.onresult = (event) => {
+        const lastIndex = event.results.length - 1;
+        const spoken = event.results[lastIndex][0].transcript.trim();
+        console.log('[Voice Command Heard]:', spoken);
+        if (commandHudText && isCommandModeActive) {
+          commandHudText.textContent = `Heard: "${spoken}"`;
+        }
+        handleCommand(spoken, true);
+      };
+
+      speechRecognition.onerror = (event) => {
+        console.warn('[Speech Recognition]:', event.error);
+      };
+
+      speechRecognition.onend = () => {
+        isVoiceListening = false;
+        if (voiceCmdBtn) voiceCmdBtn.classList.remove('listening');
+        // Keep listening while command mode is active
+        if (isCommandModeActive) {
+          try { speechRecognition.start(); } catch (e) {}
+        }
+      };
+    } catch (e) {
+      console.warn('Speech recognition initialization:', e);
+    }
+  }
+}
+
+function startListening() {
+  if (speechRecognition && !isVoiceListening) {
+    try {
+      speechRecognition.start();
+    } catch (e) {}
+  }
+}
+
+function stopListening() {
+  if (speechRecognition && isVoiceListening) {
+    try {
+      speechRecognition.stop();
+    } catch (e) {}
+  }
 }
 
 // ---------- USER LIST & CHAT ----------
@@ -675,7 +920,15 @@ messageInput.addEventListener('keydown', (e) => {
 
 async function sendMessage() {
   const text = messageInput.value.trim();
-  if (!text || !activeUser) return;
+  if (!text) return;
+
+  // Intercept typed activation/deactivation and commands
+  if (handleCommand(text, false)) {
+    messageInput.value = '';
+    return;
+  }
+
+  if (!activeUser) return alert('Select a user first');
   const targetUser = activeUser;
   messageInput.value = '';
   emojiPicker.classList.add('hidden');

@@ -53,6 +53,13 @@
               <div class="chat-header-subtitle hidden" id="chatHeaderSubtitle">Direct Message</div>
             </div>
           </div>
+          <div class="chat-header-actions">
+            <button class="command-mode-pill" id="commandModeToggleBtn" title="Voice & Smart Command Mode (Say 'turn on command mode' or 'turn off command mode')">
+              <span class="cmd-icon">🎙️</span>
+              <span class="cmd-label" id="cmdModeLabel">Command Mode</span>
+              <span class="cmd-status-dot" id="cmdStatusDot"></span>
+            </button>
+          </div>
         </div>
 
         <div class="chat-body" id="chatBody">
@@ -60,6 +67,20 @@
         </div>
 
         <div class="composer-wrap">
+          <!-- Command Mode Live HUD Overlay -->
+          <div class="command-hud hidden" id="commandHud">
+            <div class="command-hud-left">
+              <span class="command-hud-pulse"></span>
+              <div class="command-hud-info">
+                <div class="command-hud-title">⚡ COMMAND MODE ACTIVE</div>
+                <div class="command-hud-subtitle" id="commandHudText">Listening… Say "send &lt;message&gt;", "select &lt;user&gt;", "attach file", or "turn off command mode"</div>
+              </div>
+            </div>
+            <div class="command-hud-actions">
+              <button class="command-hud-btn" id="commandHudDeactivateBtn" title="Deactivate Command Mode">Turn Off</button>
+            </div>
+          </div>
+
           <!-- Floating Emoji Picker Popup -->
           <div class="emoji-picker hidden" id="emojiPicker">
             <div class="emoji-picker-header">
@@ -82,8 +103,9 @@
           <div class="composer hidden" id="composer">
             <button class="icon-btn" id="attachBtn" title="Send a file">📎</button>
             <button class="icon-btn" id="emojiToggleBtn" title="Choose emoji">😊</button>
+            <button class="icon-btn voice-mic-btn" id="voiceCmdBtn" title="Voice Command Assistant (Say 'turn on command mode' or 'turn off command mode')">🎙️</button>
             <input type="file" id="fileInput" class="hidden">
-            <input type="text" id="messageInput" placeholder="Type a message or add emojis…" autocomplete="off">
+            <input type="text" id="messageInput" placeholder="Type a message, add emojis, or type 'turn on command mode'…" autocomplete="off">
             <button class="send-btn" id="sendBtn">Send</button>
           </div>
         </div>
