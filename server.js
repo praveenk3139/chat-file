@@ -273,7 +273,7 @@ app.post('/api/login', async (req, res) => {
     if (!username || !password) {
       return res.status(400).json({ error: 'Username and password are required' });
     }
-    const record = await db.getUser(username);
+    const record = await db.getUser(username) || await db.findUserCaseInsensitive(username);
     if (!record || !bcrypt.compareSync(password, record.passwordHash)) {
       return res.status(401).json({ error: 'Invalid username or password' });
     }

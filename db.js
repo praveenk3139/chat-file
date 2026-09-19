@@ -80,32 +80,43 @@ const FileModel = mongoose.models.SharedFile || mongoose.model('SharedFile', Fil
 // Cached connection for serverless / repeated calls
 let cached = global._mongooseConn;
 if (!cached) {
-  cached = global._mongooseConn = { conn: null, promise: null };
+  cached = global._mongooseConn = { conn: null, promise: null, lastAttempt: 0, errorCount: 0 };
 }
 
 let isMongoReady = false;
 
 async function connectDB() {
   const uri = process.env.MONGODB_URI;
-  if (!uri) {
+  if (!uri || uri.includes('<db_password>') || uri.includes('<password>')) {
+    isMongoReady = false;
     return false;
   }
   if (cached.conn && mongoose.connection.readyState === 1) {
     isMongoReady = true;
     return true;
   }
+
+  // Prevent stalling every request if connection recently failed
+  const now = Date.now();
+  if (cached.errorCount > 0 && (now - cached.lastAttempt < 30000)) {
+    return false;
+  }
+
   if (!cached.promise) {
+    cached.lastAttempt = now;
     const opts = {
       bufferCommands: false,
-      serverSelectionTimeoutMS: 8000,
+      serverSelectionTimeoutMS: 4000,
     };
     cached.promise = mongoose.connect(uri, opts).then((m) => {
       console.log('✅ Connected to online MongoDB successfully.');
       isMongoReady = true;
+      cached.errorCount = 0;
       return m;
     }).catch((err) => {
       console.error('⚠️ MongoDB connection error, falling back to local storage:', err.message);
       cached.promise = null;
+      cached.errorCount = (cached.errorCount || 0) + 1;
       isMongoReady = false;
       return null;
     });
@@ -146,12 +157,18 @@ async function getUser(username) {
   }
   let users = readJSON(USERS_FILE, {});
   if (!users[username]) {
+    const match = Object.keys(users).find(u => u.toLowerCase() === String(username).toLowerCase());
+    if (match) {
+      return { username: match, ...users[match] };
+    }
     // Check if new user was registered and committed to GitHub
     try {
       const gh = await githubSync.fetchUsersFromGithub();
-      if (gh && gh.users && gh.users[username]) {
-        users[username] = gh.users[username];
+      if (gh && gh.users) {
+        users = { ...users, ...gh.users };
         writeJSON(USERS_FILE, users);
+        const ghMatch = Object.keys(users).find(u => u.toLowerCase() === String(username).toLowerCase());
+        if (ghMatch) return { username: ghMatch, ...users[ghMatch] };
       }
     } catch (e) {}
   }
@@ -166,7 +183,7 @@ async function findUserCaseInsensitive(username) {
     return await UserModel.findOne({ username: new RegExp(`^${escaped}$`, 'i') }).lean();
   }
   let users = readJSON(USERS_FILE, {});
-  let match = Object.keys(users).find(u => u.toLowerCase() === username.toLowerCase());
+  let match = Object.keys(users).find(u => u.toLowerCase() === String(username).toLowerCase());
   if (!match) {
     // Check if new user exists in GitHub repository
     try {
@@ -174,7 +191,7 @@ async function findUserCaseInsensitive(username) {
       if (gh && gh.users) {
         users = { ...users, ...gh.users };
         writeJSON(USERS_FILE, users);
-        match = Object.keys(users).find(u => u.toLowerCase() === username.toLowerCase());
+        match = Object.keys(users).find(u => u.toLowerCase() === String(username).toLowerCase());
       }
     } catch (e) {}
   }
