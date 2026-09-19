@@ -437,27 +437,32 @@ async function seedAndSync({ adminUsername, adminPasswordHash, seedPath }) {
       }
     }
 
-    // Two-way sync: Pull all online MongoDB users back to local users.json cache
+    // Clean up any user deleted from users.json (like pavithra)
+    const allMongoUsers = await UserModel.find({}).lean();
+    for (const mUser of allMongoUsers) {
+      const isSeedAdmin = mUser.username.toLowerCase() === adminUsername.toLowerCase();
+      const existsInLocal = localUsers[mUser.username] || Object.keys(localUsers).some(k => k.toLowerCase() === mUser.username.toLowerCase());
+      if (!isSeedAdmin && !existsInLocal) {
+        await UserModel.deleteOne({ username: mUser.username });
+        console.log(`[MongoDB] Removed deleted user "${mUser.username}" from online MongoDB.`);
+      }
+    }
+
+    // Keep local cache in sync with active MongoDB users
     try {
-      const allMongoUsers = await UserModel.find({}).lean();
-      const currentLocal = readJSON(USERS_FILE, {});
-      let updatedLocal = false;
-      for (const mUser of allMongoUsers) {
-        if (!currentLocal[mUser.username] || currentLocal[mUser.username].passwordHash !== mUser.passwordHash) {
-          currentLocal[mUser.username] = {
-            passwordHash: mUser.passwordHash,
-            createdAt: mUser.createdAt,
-            isAdmin: !!mUser.isAdmin,
-            isBlocked: !!mUser.isBlocked,
-            avatarFile: mUser.avatarFile || null,
-            avatarUpdatedAt: mUser.avatarUpdatedAt || null
-          };
-          updatedLocal = true;
-        }
+      const currentMongoUsers = await UserModel.find({}).lean();
+      const currentLocal = {};
+      for (const mUser of currentMongoUsers) {
+        currentLocal[mUser.username] = {
+          passwordHash: mUser.passwordHash,
+          createdAt: mUser.createdAt,
+          isAdmin: !!mUser.isAdmin,
+          isBlocked: !!mUser.isBlocked,
+          avatarFile: mUser.avatarFile || null,
+          avatarUpdatedAt: mUser.avatarUpdatedAt || null
+        };
       }
-      if (updatedLocal) {
-        writeJSON(USERS_FILE, currentLocal);
-      }
+      writeJSON(USERS_FILE, currentLocal);
     } catch (e) {
       console.error('[MongoDB] Error updating local cache from MongoDB:', e.message);
     }

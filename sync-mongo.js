@@ -71,6 +71,15 @@ async function syncAll() {
       }
     }
 
+    // Remove any user deleted from users.json (like pavithra)
+    const allDbUsers = await UserModel.find({}).lean();
+    for (const dbUser of allDbUsers) {
+      if (dbUser.username.toLowerCase() !== 'praveen' && !localUsers[dbUser.username] && !Object.keys(localUsers).some(k => k.toLowerCase() === dbUser.username.toLowerCase())) {
+        await UserModel.deleteOne({ username: dbUser.username });
+        console.log(`  🗑️ [DELETED] "${dbUser.username}" removed from MongoDB Atlas.`);
+      }
+    }
+
     const allInDb = await UserModel.find({}).lean();
     console.log(`\n🎉 Total users now in MongoDB Atlas (${allInDb.length}):`);
     allInDb.forEach((u, i) => {

@@ -7,14 +7,6 @@
     "avatarFile": "peakpx (9).jpg",
     "avatarUpdatedAt": 1788529759803
   },
-  "pavithra": {
-    "passwordHash": "$2a$10$3T0aY.TQhqj81FvxfRNhGeQbENVRJr1waQKSWi7ohYESsGiZJseYW",
-    "createdAt": 1788529442182,
-    "isAdmin": false,
-    "isBlocked": false,
-    "avatarFile": "avatar_pavithra_1788529759786.jpg",
-    "avatarUpdatedAt": 1788529759803
-  },
   "sanjay.k": {
     "passwordHash": "$2a$10$g1BX18s9q2DLEZgVj0qDp.9nFGKMC6Z9c6wqIu9eOO.hXCgOUsmn.",
     "createdAt": 1788551256341,
