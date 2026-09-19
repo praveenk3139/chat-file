@@ -33,16 +33,39 @@ npm start
 
 Then open **http://localhost:3000** — register a couple of accounts (in two different browser tabs/windows or incognito), and chat / send files between them.
 
+## Online MongoDB Atlas Setup
+
+To store and verify all users in online MongoDB (MongoDB Atlas):
+
+1. Create a free database cluster at [MongoDB Atlas](https://www.mongodb.com/atlas/database).
+2. Create a Database User (username & password) under **Database Access**.
+3. Under **Network Access**, allow access from anywhere (`0.0.0.0/0`) or your IP.
+4. Click **Connect** → **Drivers** (Node.js) and copy your connection string:
+   ```
+   mongodb+srv://<username>:<password>@cluster0.abcde.mongodb.net/chatshare?retryWrites=true&w=majority
+   ```
+5. Paste it in your [.env](file:///c:/Users/prave/Documents/chat-file-share/.env) file:
+   ```env
+   MONGODB_URI=mongodb+srv://<username>:<password>@cluster0.abcde.mongodb.net/chatshare?retryWrites=true&w=majority
+   ```
+
+### How User Verification & Online Storage Works:
+- **Automatic Sync of Existing Users**: On startup, any existing users in `data/users.json` (including `praveen`, `pavithra`, etc.) are automatically synced into online MongoDB.
+- **New User Registration**: When any new user creates an account (`/api/register`), they are stored directly into MongoDB.
+- **Online User Verification**: During login (`/api/login`) and session validation (`/api/me`), credentials and blocked status are verified directly against online MongoDB.
+- **Profile / Avatar Updates & Admin Actions**: Changes made to user accounts, avatars, passwords, and block status are saved and verified in real time in MongoDB.
+- **Automatic Offline Fallback**: If `MONGODB_URI` is not set or network drops, the application smoothly falls back to local storage without crashing.
+
 Optional environment variables:
 
 | Variable         | Default                          | Purpose                          |
 |------------------|-----------------------------------|-----------------------------------|
+| `MONGODB_URI`    | *(optional)*                      | **Online MongoDB Atlas connection string** for cloud database user storage & verification |
 | `PORT`           | `3000`                            | Port the server listens on       |
 | `SESSION_SECRET` | (a default, **change for prod**)  | Secret used to sign session cookies |
-| `GITHUB_TOKEN`   | *(optional)*                      | GitHub Personal Access Token (PAT) with repo contents write permission. When deployed on Vercel, newly registered users are automatically committed to `data/users.json` in GitHub! |
+| `GITHUB_TOKEN`   | *(optional)*                      | GitHub Personal Access Token (PAT) for fallback backup sync |
 | `GITHUB_REPO`    | `praveenk3139/chat-file-share`    | GitHub repository (`owner/repo`) |
 | `GITHUB_BRANCH`  | `main`                            | Branch to commit new users to    |
-| `MONGODB_URI`    | *(optional)*                      | MongoDB Atlas connection string (alternative permanent cloud storage) |
 
 ## How the pieces work
 

@@ -1,17 +1,18 @@
 /**
  * Database abstraction layer for Chat + File Share
  * Supports:
- * - MongoDB Atlas (when MONGODB_URI is provided in environment)
- * - Local JSON file fallback (when MONGODB_URI is not set or offline)
+ * - Online MongoDB / MongoDB Atlas (when MONGODB_URI is provided in environment or .env)
+ * - Local JSON file fallback (when MONGODB_URI is not set or temporarily offline)
  * - Cached connection for Vercel serverless functions
+ * - Automatic 2-way synchronization between local seed accounts and online MongoDB
  */
 
+require('dotenv').config();
 const path = require('path');
 const fs = require('fs');
 const mongoose = require('mongoose');
 const githubSync = require('./githubSync');
 
-const MONGODB_URI = process.env.MONGODB_URI;
 const IS_VERCEL = !!process.env.VERCEL;
 
 const DATA_DIR = IS_VERCEL ? path.join('/tmp', 'chat-data') : path.join(__dirname, 'data');
@@ -51,7 +52,7 @@ const UserSchema = new mongoose.Schema({
   isBlocked: { type: Boolean, default: false },
   avatarFile: { type: String, default: null },
   avatarUpdatedAt: { type: Number, default: null }
-}, { timestamps: false });
+}, { timestamps: false, collection: 'users' });
 
 const MessageSchema = new mongoose.Schema({
   id: { type: String, required: true, unique: true, index: true },
@@ -60,7 +61,7 @@ const MessageSchema = new mongoose.Schema({
   text: { type: String, required: true },
   avatarUrl: { type: String, default: null },
   timestamp: { type: Number, default: Date.now, index: true }
-}, { timestamps: false });
+}, { timestamps: false, collection: 'messages' });
 
 const FileSchema = new mongoose.Schema({
   id: { type: String, required: true, unique: true, index: true },
@@ -70,13 +71,13 @@ const FileSchema = new mongoose.Schema({
   from: { type: String, required: true, index: true },
   to: { type: String, required: true, index: true },
   uploadedAt: { type: Number, default: Date.now, index: true }
-}, { timestamps: false });
+}, { timestamps: false, collection: 'files' });
 
 const UserModel = mongoose.models.User || mongoose.model('User', UserSchema);
 const MessageModel = mongoose.models.Message || mongoose.model('Message', MessageSchema);
 const FileModel = mongoose.models.SharedFile || mongoose.model('SharedFile', FileSchema);
 
-// Cached connection for serverless
+// Cached connection for serverless / repeated calls
 let cached = global._mongooseConn;
 if (!cached) {
   cached = global._mongooseConn = { conn: null, promise: null };
@@ -85,7 +86,7 @@ if (!cached) {
 let isMongoReady = false;
 
 async function connectDB() {
-  const uri = process.env.MONGODB_URI || MONGODB_URI;
+  const uri = process.env.MONGODB_URI;
   if (!uri) {
     return false;
   }
@@ -96,14 +97,14 @@ async function connectDB() {
   if (!cached.promise) {
     const opts = {
       bufferCommands: false,
-      serverSelectionTimeoutMS: 5000,
+      serverSelectionTimeoutMS: 8000,
     };
     cached.promise = mongoose.connect(uri, opts).then((m) => {
-      console.log('Connected to MongoDB Atlas successfully.');
+      console.log('✅ Connected to online MongoDB successfully.');
       isMongoReady = true;
       return m;
     }).catch((err) => {
-      console.error('MongoDB connection error, falling back to local storage:', err.message);
+      console.error('⚠️ MongoDB connection error, falling back to local storage:', err.message);
       cached.promise = null;
       isMongoReady = false;
       return null;
@@ -121,11 +122,27 @@ function isUsingMongo() {
   return isMongoReady && mongoose.connection.readyState === 1;
 }
 
+function getDBStatus() {
+  const usingMongo = isUsingMongo();
+  return {
+    provider: usingMongo ? 'MongoDB Atlas (Online)' : 'Local JSON Storage',
+    isOnline: usingMongo,
+    readyState: mongoose.connection.readyState
+  };
+}
+
 // ---------------- USER OPERATIONS ----------------
 async function getUser(username) {
+  if (!username) return null;
   await connectDB();
   if (isUsingMongo()) {
-    return await UserModel.findOne({ username }).lean();
+    // Try exact match first, then case-insensitive fallback
+    let doc = await UserModel.findOne({ username }).lean();
+    if (!doc) {
+      const escaped = String(username).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      doc = await UserModel.findOne({ username: new RegExp(`^${escaped}$`, 'i') }).lean();
+    }
+    return doc;
   }
   let users = readJSON(USERS_FILE, {});
   if (!users[username]) {
@@ -142,9 +159,10 @@ async function getUser(username) {
 }
 
 async function findUserCaseInsensitive(username) {
+  if (!username) return null;
   await connectDB();
   if (isUsingMongo()) {
-    const escaped = username.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const escaped = String(username).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     return await UserModel.findOne({ username: new RegExp(`^${escaped}$`, 'i') }).lean();
   }
   let users = readJSON(USERS_FILE, {});
@@ -188,22 +206,30 @@ async function getAllUsersList() {
 async function saveUser(username, data) {
   await connectDB();
   if (isUsingMongo()) {
+    const escaped = String(username).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const doc = await UserModel.findOneAndUpdate(
-      { username },
+      { username: new RegExp(`^${escaped}$`, 'i') },
       { $set: { username, ...data } },
       { upsert: true, returnDocument: 'after' }
     ).lean();
+
+    // Mirror to local users.json for fast offline redundancy
+    const users = readJSON(USERS_FILE, {});
+    users[username] = { ...(users[username] || {}), ...data };
+    writeJSON(USERS_FILE, users);
+
     // Also sync to GitHub repository if GITHUB_TOKEN is present
     try {
       await githubSync.syncUserToGithub(username, data);
     } catch (e) {}
-    return doc;
+    return doc || { username, ...data };
   }
+
   const users = readJSON(USERS_FILE, {});
   users[username] = { ...(users[username] || {}), ...data };
   writeJSON(USERS_FILE, users);
 
-  // Automatically update data/users.json in GitHub repository
+  // Automatically update data/users.json in GitHub repository if enabled
   try {
     await githubSync.syncUserToGithub(username, users[username]);
   } catch (e) {
@@ -218,10 +244,12 @@ async function deleteUser(username) {
   try {
     await githubSync.syncDeleteUserFromGithub(username);
   } catch (e) {}
+
   if (isUsingMongo()) {
-    await UserModel.deleteOne({ username });
-    return true;
+    const escaped = String(username).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    await UserModel.deleteOne({ username: new RegExp(`^${escaped}$`, 'i') });
   }
+
   const users = readJSON(USERS_FILE, {});
   delete users[username];
   writeJSON(USERS_FILE, users);
@@ -331,11 +359,11 @@ async function deleteFile(id) {
   return true;
 }
 
-// ---------------- SEED & SYNC ----------------
+// ---------------- SEED & SYNC (ALL USERS TO/FROM MONGODB) ----------------
 async function seedAndSync({ adminUsername, adminPasswordHash, seedPath }) {
   await connectDB();
 
-  // Load local seed file if present
+  // 1. Load local seed file if present
   let localUsers = {};
   if (seedPath && fs.existsSync(seedPath)) {
     try {
@@ -343,7 +371,7 @@ async function seedAndSync({ adminUsername, adminPasswordHash, seedPath }) {
     } catch (e) {}
   }
 
-  // Also pull latest users from GitHub repository (critical for Vercel cold starts)
+  // 2. Also pull latest users from GitHub repository if available
   try {
     const gh = await githubSync.fetchUsersFromGithub();
     if (gh && gh.users) {
@@ -356,27 +384,39 @@ async function seedAndSync({ adminUsername, adminPasswordHash, seedPath }) {
   } catch (e) {}
 
   if (isUsingMongo()) {
-    // 1. Ensure Admin User in MongoDB
-    const adminDoc = await UserModel.findOne({ username: adminUsername });
+    console.log('[MongoDB] Synchronizing all users with online MongoDB Atlas…');
+
+    // Ensure Admin User in online MongoDB
+    const escapedAdmin = String(adminUsername).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const adminDoc = await UserModel.findOne({ username: new RegExp(`^${escapedAdmin}$`, 'i') });
+    const localAdmin = localUsers[adminUsername];
+
     if (!adminDoc) {
       await UserModel.create({
         username: adminUsername,
-        passwordHash: adminPasswordHash,
-        createdAt: Date.now(),
+        passwordHash: (localAdmin && localAdmin.passwordHash) || adminPasswordHash,
+        createdAt: (localAdmin && localAdmin.createdAt) || Date.now(),
         isAdmin: true,
-        isBlocked: false
+        isBlocked: false,
+        avatarFile: (localAdmin && localAdmin.avatarFile) || null,
+        avatarUpdatedAt: (localAdmin && localAdmin.avatarUpdatedAt) || null
       });
-      console.log(`[MongoDB] Admin user "${adminUsername}" created.`);
+      console.log(`[MongoDB] Admin user "${adminUsername}" registered in online MongoDB.`);
     } else {
       adminDoc.isAdmin = true;
       adminDoc.isBlocked = false;
+      if (localAdmin && localAdmin.avatarFile && !adminDoc.avatarFile) {
+        adminDoc.avatarFile = localAdmin.avatarFile;
+        adminDoc.avatarUpdatedAt = localAdmin.avatarUpdatedAt;
+      }
       await adminDoc.save();
     }
 
-    // 2. Sync local users (e.g. praveenkumar) into MongoDB if they don't exist yet
+    // Sync ALL existing users from local users.json (pavithra, sanjay.k, etc.) into online MongoDB
     for (const [uname, udata] of Object.entries(localUsers)) {
-      if (uname === adminUsername) continue;
-      const exists = await UserModel.findOne({ username: uname });
+      if (uname.toLowerCase() === adminUsername.toLowerCase()) continue;
+      const escaped = String(uname).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const exists = await UserModel.findOne({ username: new RegExp(`^${escaped}$`, 'i') });
       if (!exists && udata && udata.passwordHash) {
         await UserModel.create({
           username: uname,
@@ -387,8 +427,33 @@ async function seedAndSync({ adminUsername, adminPasswordHash, seedPath }) {
           avatarFile: udata.avatarFile || null,
           avatarUpdatedAt: udata.avatarUpdatedAt || null
         });
-        console.log(`[MongoDB] Synced local user "${uname}" into MongoDB Atlas.`);
+        console.log(`[MongoDB] Synced user "${uname}" into online MongoDB.`);
       }
+    }
+
+    // Two-way sync: Pull all online MongoDB users back to local users.json cache
+    try {
+      const allMongoUsers = await UserModel.find({}).lean();
+      const currentLocal = readJSON(USERS_FILE, {});
+      let updatedLocal = false;
+      for (const mUser of allMongoUsers) {
+        if (!currentLocal[mUser.username] || currentLocal[mUser.username].passwordHash !== mUser.passwordHash) {
+          currentLocal[mUser.username] = {
+            passwordHash: mUser.passwordHash,
+            createdAt: mUser.createdAt,
+            isAdmin: !!mUser.isAdmin,
+            isBlocked: !!mUser.isBlocked,
+            avatarFile: mUser.avatarFile || null,
+            avatarUpdatedAt: mUser.avatarUpdatedAt || null
+          };
+          updatedLocal = true;
+        }
+      }
+      if (updatedLocal) {
+        writeJSON(USERS_FILE, currentLocal);
+      }
+    } catch (e) {
+      console.error('[MongoDB] Error updating local cache from MongoDB:', e.message);
     }
   } else {
     // Local file fallback seeding
@@ -421,6 +486,7 @@ async function seedAndSync({ adminUsername, adminPasswordHash, seedPath }) {
 module.exports = {
   connectDB,
   isUsingMongo,
+  getDBStatus,
   getUser,
   findUserCaseInsensitive,
   getAllUsersMap,

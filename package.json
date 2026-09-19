@@ -11,8 +11,10 @@
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
+    "dotenv": "^18.0.1",
     "express": "^4.19.2",
     "express-session": "^1.18.0",
+    "mongodb": "^7.6.0",
     "mongoose": "^9.9.4",
     "multer": "^2.0.0",
     "nanoid": "^3.3.7",

@@ -9,6 +9,7 @@
  * - Persistent Cloud DB (MongoDB Atlas) support + local JSON fallback via db.js
  */
 
+require('dotenv').config();
 const path = require('path');
 const fs = require('fs');
 const express = require('express');
@@ -623,6 +624,12 @@ app.get('/api/files/:id/download', requireAuth, async (req, res) => {
 // ---------- ADMIN ENDPOINTS (PRAVEEN) -----
 // ==========================================
 
+// Public database health check
+app.get('/api/db-status', async (req, res) => {
+  const status = db.getDBStatus();
+  res.json({ ok: true, ...status });
+});
+
 // 1. Get stats
 app.get('/api/admin/stats', requireAdmin, async (req, res) => {
   const users = await db.getAllUsersList();
@@ -638,7 +645,8 @@ app.get('/api/admin/stats', requireAdmin, async (req, res) => {
     activeUsers,
     blockedUsers,
     totalMessages: messages.length,
-    totalFiles: files.length
+    totalFiles: files.length,
+    dbStatus: db.getDBStatus()
   });
 });
 
